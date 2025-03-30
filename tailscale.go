@@ -102,6 +102,8 @@ func (t *Tailscale) processNetMap(nm *netmap.NetworkMap) {
 	nodes = append(nodes, nm.Peers...)
 
 	entries := map[string]map[string][]string{}
+	var validNodes int
+
 	for _, node := range nodes {
 		if node.IsWireGuardOnly() {
 			// IsWireGuardOnly identifies a node as a Mullvad exit node.
@@ -113,6 +115,7 @@ func (t *Tailscale) processNetMap(nm *netmap.NetworkMap) {
 			continue
 		}
 
+		validNodes++
 		hostname := node.ComputedName()
 		entry, ok := entries[hostname]
 		if !ok {
@@ -149,4 +152,8 @@ func (t *Tailscale) processNetMap(nm *netmap.NetworkMap) {
 	t.entries = entries
 	t.mu.Unlock()
 	log.Debugf("updated %d Tailscale entries", len(entries))
+
+	// Update node count metric
+	// Use an empty string as server label as this is a global metric
+	NodeCount.WithLabelValues("").Set(float64(validNodes))
 }

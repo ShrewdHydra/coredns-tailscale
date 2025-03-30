@@ -1,5 +1,0 @@
-example.com:53 {
-  tailscale example.com
-  log 
-  errors
-}

@@ -23,6 +23,21 @@ tailscale ZONE
 
 * **ZONE** is the zone that plugin should be authoritative for.
 
+## Metrics
+
+If monitoring is enabled (via the *prometheus* directive) the following metrics are exported:
+
+* `coredns_tailscale_requests_total{server,type}` - count of DNS requests processed by record type
+* `coredns_tailscale_responses_total{server,rcode}` - count of DNS responses by return code
+* `coredns_tailscale_request_duration_seconds{server}` - histogram of request processing time
+* `coredns_tailscale_nodes_total{server}` - number of Tailscale nodes in the Tailnet
+
+The `server` label indicates which server handled the request, the `type` label indicates the DNS record type requested (A, AAAA, CNAME, etc.), and the `rcode` label indicates the DNS response code (NOERROR, NXDOMAIN, etc.).
+
+## Ready
+
+This plugin reports readiness to the ready plugin once it has successfully loaded the Tailscale node information.
+
 ## Examples
 
 Enable tailscale plugin for the `example.com` zone:
@@ -39,6 +54,22 @@ With this configuration:
 1. Tailscale machines will resolve as `machinename.example.com`
 2. Machines with Tailscale tags like `cname-app` will create `app.example.com` records pointing to that machine
 3. Subdomains like `web.machinename.example.com` will resolve to the same IP as `machinename.example.com`
+
+Enable metrics for monitoring:
+
+```
+example.com {
+  tailscale example.com
+  prometheus
+  log
+  errors
+}
+```
+
+This configuration:
+1. Serves DNS records for Tailscale machines on `example.com`
+2. Exports Prometheus metrics for the tailscale plugin
+3. Makes metrics available at http://localhost:9153/metrics
 
 ## CNAME Records via Tailscale Tags
 
