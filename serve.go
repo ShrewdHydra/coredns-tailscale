@@ -23,12 +23,37 @@ const (
 // in a Server.
 
 func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
+	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
+	fqdnName := dns.Fqdn(strings.ToLower(domainName))
+	zoneFqdn := dns.Fqdn(t.zone)
+	log.Debugf("Resolving A record for %s in zone %s", fqdnName, zoneFqdn)
 
-	name := strings.Split(domainName, ".")[0]
+	// Check if this domain is in our zone
+	if !dns.IsSubDomain(zoneFqdn, fqdnName) {
+		log.Debug("Domain is not in zone, returning")
+		return
+	}
+
+	// Get the number of labels in common between domain and zone
+	commonLabels := dns.CompareDomainName(fqdnName, zoneFqdn)
+	labels := dns.SplitDomainName(fqdnName)
+	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
+
+	name := labels[len(labels)-commonLabels-1]
+	log.Debugf("Extracted base name: %s", name)
+
+	// Look for an A record
 	entries, ok := t.entries[name]["A"]
 	if ok {
-		log.Debugf("Found an v4 entry after lookup for: %s", name)
+		log.Debugf("Found A record for %s with %d entries", name, len(entries))
+	} else {
+		log.Debugf("No A record found for %s", name)
+	}
+
+	if ok {
+		log.Debugf("Adding A records for %s to response", name)
 		for _, entry := range entries {
+			log.Debugf("  - Adding A record: %s", entry)
 			msg.Answer = append(msg.Answer, &dns.A{
 				Hdr: dns.RR_Header{Name: domainName, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60},
 				A:   net.ParseIP(entry),
@@ -39,16 +64,34 @@ func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
 		log.Debug("No v4 entry after lookup, so trying CNAME")
 		t.resolveCNAME(domainName, msg, TypeA)
 	}
-
 }
 
 func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
+	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
+	fqdnName := dns.Fqdn(strings.ToLower(domainName))
+	zoneFqdn := dns.Fqdn(t.zone)
+	log.Debugf("Resolving AAAA record for %s in zone %s", fqdnName, zoneFqdn)
 
-	name := strings.Split(domainName, ".")[0]
+	// Get the number of labels in common between domain and zone
+	commonLabels := dns.CompareDomainName(fqdnName, zoneFqdn)
+	labels := dns.SplitDomainName(fqdnName)
+	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
+
+	name := labels[len(labels)-commonLabels-1]
+	log.Debugf("Extracted base name: %s", name)
+
+	// Look for an AAAA record
 	entries, ok := t.entries[name]["AAAA"]
 	if ok {
-		log.Debugf("Found a v6 entry after lookup for: %s", name)
+		log.Debugf("Found AAAA record for %s with %d entries", name, len(entries))
+	} else {
+		log.Debugf("No AAAA record found for %s", name)
+	}
+
+	if ok {
+		log.Debugf("Adding AAAA records for %s to response", name)
 		for _, entry := range entries {
+			log.Debugf("  - Adding AAAA record: %s", entry)
 			msg.Answer = append(msg.Answer, &dns.AAAA{
 				Hdr:  dns.RR_Header{Name: domainName, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: 60},
 				AAAA: net.ParseIP(entry),
@@ -59,16 +102,34 @@ func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
 		log.Debug("No v6 entry after lookup, so trying CNAME")
 		t.resolveCNAME(domainName, msg, TypeAAAA)
 	}
-
 }
 
 func (t *Tailscale) resolveCNAME(domainName string, msg *dns.Msg, lookupType int) {
+	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
+	fqdnName := dns.Fqdn(strings.ToLower(domainName))
+	zoneFqdn := dns.Fqdn(t.zone)
+	log.Debugf("Resolving CNAME record for %s in zone %s", fqdnName, zoneFqdn)
 
-	name := strings.Split(domainName, ".")[0]
+	// Get the number of labels in common between domain and zone
+	commonLabels := dns.CompareDomainName(fqdnName, zoneFqdn)
+	labels := dns.SplitDomainName(fqdnName)
+	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
+
+	name := labels[len(labels)-commonLabels-1]
+	log.Debugf("Extracted base name: %s", name)
+
+	// Look for a CNAME record
 	targets, ok := t.entries[name]["CNAME"]
 	if ok {
-		log.Debugf("Found a CNAME entry after lookup for: %s", name)
+		log.Debugf("Found CNAME record for %s with %d entries", name, len(targets))
+	} else {
+		log.Debugf("No CNAME record found for %s", name)
+	}
+
+	if ok {
+		log.Debugf("Adding CNAME records for %s to response", name)
 		for _, target := range targets {
+			log.Debugf("  - Adding CNAME record: %s", target)
 			msg.Answer = append(msg.Answer, &dns.CNAME{
 				Hdr:    dns.RR_Header{Name: domainName, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 60},
 				Target: target,
@@ -85,23 +146,39 @@ func (t *Tailscale) resolveCNAME(domainName string, msg *dns.Msg, lookupType int
 			}
 		}
 	}
-
 }
 
 func (t *Tailscale) handleNoRecords(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, msg *dns.Msg) (int, error) {
+	log.Debugf("No records found for %s, checking fallthrough", r.Question[0].Name)
 	if t.fall.Through(r.Question[0].Name) {
-		log.Debug("falling through")
+		log.Debug("falling through to next plugin")
 		return plugin.NextOrFailure(t.Name(), t.next, ctx, w, r)
 	} else {
-		log.Debugf("Writing response: %+v", msg)
+		log.Debug("No records and no fallthrough, returning NXDOMAIN")
 		w.WriteMsg(msg)
 		return dns.RcodeNameError, nil
 	}
 }
 
 func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
-	log.Debugf("Received request for name: %v", r.Question[0].Name)
+	log.Debugf("Received DNS request for %s (type: %s)", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype])
 	log.Debugf("Tailscale peers list has %d entries", len(t.entries))
+
+	if t.zone == "" {
+		log.Warning("Zone is not configured")
+	} else {
+		log.Debugf("Configured zone: %s", t.zone)
+	}
+
+	if len(t.entries) > 0 {
+		log.Debug("Available entries:")
+		for name, types := range t.entries {
+			log.Debugf("  ├─ Host: %s", name)
+			for recordType, values := range types {
+				log.Debugf("  │  ├─ %s: %v", recordType, values)
+			}
+		}
+	}
 
 	msg := dns.Msg{}
 	msg.SetReply(r)
@@ -110,6 +187,8 @@ func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 	name := r.Question[0].Name
 
 	t.mu.RLock()
+	defer t.mu.RUnlock()
+
 	switch r.Question[0].Qtype {
 	case dns.TypeA:
 		log.Debug("Handling A record lookup")
@@ -123,16 +202,16 @@ func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 		log.Debug("Handling CNAME record lookup")
 		t.resolveCNAME(name, &msg, TypeAll)
 	}
-	defer t.mu.RUnlock()
 
 	if len(msg.Answer) == 0 {
+		log.Debug("No answers in response")
 		return t.handleNoRecords(ctx, w, r, &msg)
 	}
 
 	// Export metric with the server label set to the current server handling the request.
 	//requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
 
-	log.Debugf("Writing response: %+v", msg)
+	log.Debugf("Sending response with %d answers", len(msg.Answer))
 	w.WriteMsg(&msg)
 	return dns.RcodeSuccess, nil
 }
