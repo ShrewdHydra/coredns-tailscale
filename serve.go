@@ -25,7 +25,7 @@ const (
 // in a Server.
 
 func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
-	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
+	log.Debugf("Resolving A record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
 	commonLabels := dns.CompareDomainName(domainName, t.zone)
@@ -60,7 +60,6 @@ func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
 }
 
 func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
-	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
 	log.Debugf("Resolving AAAA record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
@@ -96,7 +95,6 @@ func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
 }
 
 func (t *Tailscale) resolveCNAME(domainName string, msg *dns.Msg, lookupType int) {
-	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
 	log.Debugf("Resolving CNAME record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
@@ -190,15 +188,12 @@ func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 
 	switch r.Question[0].Qtype {
 	case dns.TypeA:
-		log.Debug("Handling A record lookup")
 		t.resolveA(qname, &msg)
 
 	case dns.TypeAAAA:
-		log.Debug("Handling AAAA record lookup")
 		t.resolveAAAA(qname, &msg)
 
 	case dns.TypeCNAME:
-		log.Debug("Handling CNAME record lookup")
 		t.resolveCNAME(qname, &msg, TypeAll)
 	}
 

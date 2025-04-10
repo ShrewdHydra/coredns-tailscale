@@ -10,7 +10,7 @@ import (
 )
 
 func TestProcessNetMap(t *testing.T) {
-	ts := &Tailscale{zone: "example.com"}
+	ts := &Tailscale{zone: "example.com."}
 
 	self := (&tailcfg.Node{
 		ComputedName: "self",

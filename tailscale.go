@@ -140,7 +140,7 @@ func (t *Tailscale) processNetMap(nm *netmap.NetworkMap) {
 					if _, ok := entries[tag]; !ok {
 						entries[tag] = map[string][]string{}
 					}
-					entries[tag]["CNAME"] = append(entries[tag]["CNAME"], fmt.Sprintf("%s.%s.", hostname, t.zone))
+					entries[tag]["CNAME"] = append(entries[tag]["CNAME"], fmt.Sprintf("%s.%s", hostname, t.zone))
 				}
 			}
 		}
