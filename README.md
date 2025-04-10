@@ -1,51 +1,74 @@
-coredns-tailscale
-=================
+# tailscale
 
-A CoreDNS plugin implementation for Tailscale networks.
+## Name
 
-Rationale
----------
+*tailscale* - serves DNS records for Tailscale nodes with subdomain resolution support.
 
-Tailscale has some great built-in support for DNS and it keeps getting better. But there are some nice (if not purely cosmetic) reasons to be able to have Tailscale hosts resolve within your own existing domain. In addition, it's common for various services to run at a single Tailscale IP, for example, on a load balancer or web server hosting multiple virtual hosts.
+## Description
 
-Features
---------
-This plugin for CoreDNS allows the following:
+The tailscale plugin serves DNS records for Tailscale nodes in your Tailnet. It automatically creates A and AAAA records for all Tailscale machines and supports CNAME records via Tailscale tags. Additionally, it provides subdomain resolution - any subdomain of a registered Tailscale machine will resolve to the same IP address as the base machine.
 
-1. Automatically serving an (arbitrary) DNS zone with each Tailscale server in your Tailnet added with A and AAAA records.
-1. Allowing CNAME records to be defined via Tailscale node tags that link logical names to Tailscale machines.
+This plugin allows:
+- Integrating Tailscale machines into your existing DNS domain
+- Creating CNAME records via Tailscale node tags
+- Resolving arbitrary subdomains of Tailscale machines (wildcard-like behavior)
 
+The plugin retrieves node information through the local machine's Tailscale socket, so only machines visible to the hosting Tailscale node (visible in `tailscale status`) will be included in DNS responses.
 
-Configuration
--------------
+## Syntax
 
 ```
-example.com:53 {
+tailscale ZONE
+```
+
+* **ZONE** is the zone that plugin should be authoritative for.
+
+## Examples
+
+Enable tailscale plugin for the `example.com` zone:
+
+```
+example.com {
   tailscale example.com
-  log 
+  log
   errors
 }
 ```
-The above configuration will serve the connected Tailnet on the `example.com`. So, for a Tailnet with a machine named `test-machine`, A and AAAA records for `test-machine.example.com` will resolve.
 
-CNAME records via Labels
-------------------------
+With this configuration:
+1. Tailscale machines will resolve as `machinename.example.com`
+2. Machines with Tailscale tags like `cname-app` will create `app.example.com` records pointing to that machine
+3. Subdomains like `web.machinename.example.com` will resolve to the same IP as `machinename.example.com`
 
-A CNAME record can be added to point to a machine by simply creating a Tailscale machine tag prefixed by `cname-`. Any text in the tag after that prefix will be used to generate the resulting CNAME entry, so for example, the tag `cname-friendly-name` on the above `test-machine` will result in the following DNS records:
+## CNAME Records via Tailscale Tags
+
+A CNAME record can be created by adding a Tailscale machine tag prefixed with `cname-`. The text after the prefix becomes the hostname:
+
+* Machine `server1` with tag `cname-app` creates:
+  ```
+  app.example.com IN CNAME server1.example.com.
+  server1.example.com IN A <Tailscale IPv4>
+  server1.example.com IN AAAA <Tailscale IPv6>
+  ```
+
+## Subdomain Resolution
+
+Any subdomain of a Tailscale machine or CNAME will resolve to the same IP address:
 
 ```
-friendly-name IN CNAME test-machine.example.com.
-test-machine  IN A <Tailscale IPv4 Address>
-test-machine  IN AAAA <Tailscale IPv6 Address>
+server1.example.com          → <Tailscale IP>
+web.server1.example.com      → <Same Tailscale IP>
+api.web.server1.example.com  → <Same Tailscale IP>
+
+app.example.com              → <Tailscale IP via cname-app tag>
+admin.app.example.com        → <Same Tailscale IP via cname-app tag>
 ```
 
-Tailscale
----------
-Note that currently this plugin uses the local machine Tailscale socket to access Tailnet information. As a result, only machines reachable from the hosting Tailscale machine will be configured in DNS. Those machines are the ones output in `tailscale status` output (and the machine itself). This was implemented to avoid the need for managing expiring Tailscale API tokens.
+This is particularly useful for:
+- Running multiple services on the same Tailscale machine
+- Creating wildcard-like behavior without actual wildcard DNS records
+- Simplifying service discovery within a Tailnet
 
+## Also See
 
-TODO
-----
-   * Update documentation to CoreDNS plugin [documentation standard](https://github.com/coredns/coredns/blob/master/plugin.md#documentation)
-   * Add metrics support
-
+See the [CoreDNS manual](https://coredns.io/manual) and the [original repository](https://github.com/ShrewdHydra/coredns-tailscale) this fork is based on.

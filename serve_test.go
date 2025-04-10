@@ -11,10 +11,11 @@ import (
 	"github.com/coredns/coredns/plugin/pkg/dnstest"
 	"github.com/coredns/coredns/plugin/test"
 	"github.com/miekg/dns"
+
+	clog "github.com/coredns/coredns/plugin/pkg/log"
 )
 
 func newTS() Tailscale {
-
 	return Tailscale{
 		zone: "example.com",
 		entries: map[string]map[string][]string{
@@ -38,6 +39,7 @@ func newTS() Tailscale {
 }
 
 func TestServeDNSFallback(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 	ts.fall.SetZonesFromArgs(nil)
 
@@ -95,6 +97,7 @@ func TestServeDNSFallback(t *testing.T) {
 }
 
 func TestServeDNSNoFallback(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 
 	// No match
@@ -122,6 +125,7 @@ func TestServeDNSNoFallback(t *testing.T) {
 }
 
 func TestResolveA(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 	msg := dns.Msg{}
 
@@ -141,6 +145,7 @@ func TestResolveA(t *testing.T) {
 }
 
 func TestResolveAAAA(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 	msg := dns.Msg{}
 
@@ -160,6 +165,7 @@ func TestResolveAAAA(t *testing.T) {
 }
 
 func TestResolveCNAME(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 	msg := dns.Msg{}
 	domain := "test2.example.com"
@@ -196,6 +202,7 @@ func TestResolveCNAME(t *testing.T) {
 }
 
 func TestResolveAIsCNAME(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 	msg := dns.Msg{}
 	domain := "test2.example.com"
@@ -227,6 +234,7 @@ func TestResolveAIsCNAME(t *testing.T) {
 }
 
 func TestResolveAAAAIsCNAME(t *testing.T) {
+	clog.D.Set()
 	ts := newTS()
 	msg := dns.Msg{}
 	domain := "test2.example.com"
@@ -257,8 +265,154 @@ func TestResolveAAAAIsCNAME(t *testing.T) {
 	testEquals(t, "AAAA record", []string{"::1", "::1"}, aaaas)
 }
 
-func testEquals(t *testing.T, msg string, expected interface{}, received interface{}) {
+func TestSubdomainResolution(t *testing.T) {
+	clog.D.Set()
+	ts := newTS()
 
+	testCases := []struct {
+		name      string
+		query     string
+		qtype     uint16
+		expectIP  string
+		rcode     int
+		checkFunc func(t *testing.T, msg *dns.Msg)
+	}{
+		{
+			name:     "simple subdomain A record",
+			query:    "sub.test1.example.com",
+			qtype:    dns.TypeA,
+			expectIP: "127.0.0.1",
+			rcode:    dns.RcodeSuccess,
+		},
+		{
+			name:     "deep subdomain A record",
+			query:    "a.b.c.d.test1.example.com",
+			qtype:    dns.TypeA,
+			expectIP: "127.0.0.1",
+			rcode:    dns.RcodeSuccess,
+		},
+		{
+			name:     "subdomain AAAA record",
+			query:    "sub.test1.example.com",
+			qtype:    dns.TypeAAAA,
+			expectIP: "::1",
+			rcode:    dns.RcodeSuccess,
+		},
+		{
+			name:     "deep subdomain AAAA record",
+			query:    "deep.sub.test1.example.com",
+			qtype:    dns.TypeAAAA,
+			expectIP: "::1",
+			rcode:    dns.RcodeSuccess,
+		},
+		{
+			name:  "subdomain of nonexistent host",
+			query: "sub.nonexistent.example.com",
+			qtype: dns.TypeA,
+			rcode: dns.RcodeNameError,
+		},
+		{
+			name:  "subdomain of existing host CNAME",
+			query: "something.test2.example.com",
+			qtype: dns.TypeA,
+			rcode: dns.RcodeSuccess,
+			checkFunc: func(t *testing.T, msg *dns.Msg) {
+				var hasCNAME, hasA bool
+				for _, rr := range msg.Answer {
+					switch rr.(type) {
+					case *dns.CNAME:
+						hasCNAME = true
+					case *dns.A:
+						hasA = true
+					}
+				}
+				if !hasCNAME {
+					t.Error("Expected CNAME records in response")
+				}
+				if !hasA {
+					t.Error("Expected A records in response")
+				}
+			},
+		},
+		{
+			name:  "CNAME request on subdomain",
+			query: "sub.sub.test2.example.com",
+			qtype: dns.TypeCNAME,
+			rcode: dns.RcodeSuccess,
+			checkFunc: func(t *testing.T, msg *dns.Msg) {
+				var hasCNAME bool
+				for _, rr := range msg.Answer {
+					if _, ok := rr.(*dns.CNAME); ok {
+						hasCNAME = true
+						break
+					}
+				}
+				if !hasCNAME {
+					t.Error("Expected CNAME records in response")
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var msg dns.Msg
+			msg.SetQuestion(tc.query, tc.qtype)
+			w := dnstest.NewRecorder(&test.ResponseWriter{})
+			resp, err := ts.ServeDNS(context.Background(), w, &msg)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if want, got := tc.rcode, resp; got != want {
+				t.Fatalf("want response code %d, got %d", want, got)
+			}
+
+			if tc.expectIP != "" && len(w.Msg.Answer) > 0 {
+				var gotIP net.IP
+
+				switch tc.qtype {
+				case dns.TypeA:
+					if a, ok := w.Msg.Answer[0].(*dns.A); ok {
+						gotIP = a.A
+					} else {
+						for _, ans := range w.Msg.Answer {
+							if a, ok := ans.(*dns.A); ok {
+								gotIP = a.A
+								break
+							}
+						}
+					}
+				case dns.TypeAAAA:
+					if aaaa, ok := w.Msg.Answer[0].(*dns.AAAA); ok {
+						gotIP = aaaa.AAAA
+					} else {
+						for _, ans := range w.Msg.Answer {
+							if aaaa, ok := ans.(*dns.AAAA); ok {
+								gotIP = aaaa.AAAA
+								break
+							}
+						}
+					}
+				}
+
+				if gotIP != nil {
+					if want, got := net.ParseIP(tc.expectIP), gotIP; !got.Equal(want) {
+						t.Errorf("want %s, got: %s", want, got)
+					}
+				} else if tc.expectIP != "" {
+					t.Errorf("expected IP %s but no matching record found", tc.expectIP)
+				}
+			}
+
+			if tc.checkFunc != nil {
+				tc.checkFunc(t, w.Msg)
+			}
+		})
+	}
+}
+
+func testEquals(t *testing.T, msg string, expected interface{}, received interface{}) {
 	if !reflect.DeepEqual(expected, received) {
 		t.Errorf("Expected %s %s: received %s", msg, expected, received)
 	}
