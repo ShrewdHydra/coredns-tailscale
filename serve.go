@@ -4,10 +4,12 @@ import (
 	"context"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/miekg/dns"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/metrics"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
 )
 
@@ -155,14 +157,24 @@ func (t *Tailscale) handleNoRecords(ctx context.Context, w dns.ResponseWriter, r
 		return plugin.NextOrFailure(t.Name(), t.next, ctx, w, r)
 	} else {
 		log.Debug("No records and no fallthrough, returning NXDOMAIN")
-		w.WriteMsg(msg)
+		RcodeCount.WithLabelValues(dns.RcodeToString[dns.RcodeNameError], metrics.WithServer(ctx)).Inc()
+		if err := w.WriteMsg(msg); err != nil {
+			log.Warningf("Error writing NXDOMAIN response: %v", err)
+			return dns.RcodeServerFailure, err
+		}
 		return dns.RcodeNameError, nil
 	}
 }
 
 func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+	start := time.Now()
+
 	log.Debugf("Received DNS request for %s (type: %s)", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype])
 	log.Debugf("Tailscale peers list has %d entries", len(t.entries))
+
+	// Record the request in metrics
+	queryType := dns.TypeToString[r.Question[0].Qtype]
+	RequestCount.WithLabelValues(metrics.WithServer(ctx), queryType).Inc()
 
 	if t.zone == "" {
 		log.Warning("Zone is not configured")
@@ -203,15 +215,19 @@ func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 		t.resolveCNAME(name, &msg, TypeAll)
 	}
 
-	if len(msg.Answer) == 0 {
+	if len(msg.Answer) > 0 {
+		log.Debugf("Sending response with %d answers", len(msg.Answer))
+		RcodeCount.WithLabelValues(dns.RcodeToString[dns.RcodeSuccess], metrics.WithServer(ctx)).Inc()
+		if err := w.WriteMsg(&msg); err != nil {
+			log.Warningf("Error writing response: %v", err)
+			return dns.RcodeServerFailure, err
+		}
+		RequestDuration.WithLabelValues(metrics.WithServer(ctx)).Observe(time.Since(start).Seconds())
+		return dns.RcodeSuccess, nil
+	} else {
 		log.Debug("No answers in response")
-		return t.handleNoRecords(ctx, w, r, &msg)
+		code, err := t.handleNoRecords(ctx, w, r, &msg)
+		RequestDuration.WithLabelValues(metrics.WithServer(ctx)).Observe(time.Since(start).Seconds())
+		return code, err
 	}
-
-	// Export metric with the server label set to the current server handling the request.
-	//requestCount.WithLabelValues(metrics.WithServer(ctx)).Inc()
-
-	log.Debugf("Sending response with %d answers", len(msg.Answer))
-	w.WriteMsg(&msg)
-	return dns.RcodeSuccess, nil
 }
