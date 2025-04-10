@@ -18,10 +18,20 @@ The plugin retrieves node information through the local machine's Tailscale sock
 ## Syntax
 
 ```
-tailscale ZONE
+tailscale ZONE {
+    [authkey KEY
+    hostname NAME]
+    [fallthrough [ZONES...]]
+}
 ```
 
 * **ZONE** is the zone that plugin should be authoritative for.
+
+**Subdirectives**:
+
+* `authkey KEY` - optional - Tailscale auth key for connecting to the Tailnet. If not provided, the plugin will connect to the local tailscaled instance.
+* `hostname NAME` - optional - hostname to use for the Tailscale node. If not provided, the plugin will use "coredns" as the hostname.
+* `fallthrough [ZONES...]` - optional - if the tailscale plugin cannot provide an answer for a query, fall through to the next plugin. If specific zones are listed, the fallthrough will only happen for those zones.
 
 ## Metrics
 
