@@ -178,7 +178,6 @@ func TestResolveCNAME(t *testing.T) {
 	var as []string
 	var aaaas []string
 	for _, rr := range msg.Answer {
-
 		switch rec := rr.(type) {
 
 		case *dns.CNAME:
@@ -195,6 +194,7 @@ func TestResolveCNAME(t *testing.T) {
 
 	sort.Strings(cnames)
 	sort.Strings(as)
+	sort.Strings(aaaas)
 	testEquals(t, "CNAME record", []string{"test2-1.example.com", "test2-2.example.com"}, cnames)
 	testEquals(t, "A record", []string{"127.0.0.1", "127.0.0.1"}, as)
 	testEquals(t, "AAAA record", []string{"::1", "::1"}, aaaas)

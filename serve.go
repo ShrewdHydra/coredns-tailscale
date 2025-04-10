@@ -3,6 +3,7 @@ package tailscale
 import (
 	"context"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -28,11 +29,11 @@ func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
 	log.Debugf("Resolving A record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
-	commonLabels := dns.CompareDomainName(domainName, t.zone)
+	numCommonLabels := dns.CompareDomainName(domainName, t.zone)
 	labels := dns.SplitDomainName(domainName)
-	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
+	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), numCommonLabels)
 
-	name := labels[len(labels)-commonLabels-1]
+	name := labels[len(labels)-numCommonLabels-1]
 	log.Debugf("Extracted base name: %s", name)
 
 	// Look for an A record
@@ -63,11 +64,11 @@ func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
 	log.Debugf("Resolving AAAA record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
-	commonLabels := dns.CompareDomainName(domainName, t.zone)
+	numCommonLabels := dns.CompareDomainName(domainName, t.zone)
 	labels := dns.SplitDomainName(domainName)
-	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
+	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), numCommonLabels)
 
-	name := labels[len(labels)-commonLabels-1]
+	name := labels[len(labels)-numCommonLabels-1]
 	log.Debugf("Extracted base name: %s", name)
 
 	// Look for an AAAA record
@@ -98,11 +99,12 @@ func (t *Tailscale) resolveCNAME(domainName string, msg *dns.Msg, lookupType int
 	log.Debugf("Resolving CNAME record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
-	commonLabels := dns.CompareDomainName(domainName, t.zone)
+	numCommonLabels := dns.CompareDomainName(domainName, t.zone)
 	labels := dns.SplitDomainName(domainName)
-	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
+	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), numCommonLabels)
 
-	name := labels[len(labels)-commonLabels-1]
+	indexUniqueLabels := len(labels) - numCommonLabels - 1
+	name := labels[indexUniqueLabels]
 	log.Debugf("Extracted base name: %s", name)
 
 	// Look for a CNAME record
@@ -116,20 +118,24 @@ func (t *Tailscale) resolveCNAME(domainName string, msg *dns.Msg, lookupType int
 	if ok {
 		log.Debugf("Adding CNAME records for %s to response", name)
 		for _, target := range targets {
-			log.Debugf("  - Adding CNAME record: %s", target)
+			targetDomain := target
+			if indexUniqueLabels > 0 {
+				targetDomain = strings.Join(labels[:indexUniqueLabels], ".") + "." + target
+			}
+			log.Debugf("  - Adding CNAME record: %s", targetDomain)
 			msg.Answer = append(msg.Answer, &dns.CNAME{
 				Hdr:    dns.RR_Header{Name: domainName, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 60},
-				Target: target,
+				Target: targetDomain,
 			})
 
 			// Resolve local zone A or AAAA records if they exist for the referenced target
 			if lookupType == TypeAll || lookupType == TypeA {
 				log.Debug("CNAME record found, lookup up local recursive A")
-				t.resolveA(target, msg)
+				t.resolveA(targetDomain, msg)
 			}
 			if lookupType == TypeAll || lookupType == TypeAAAA {
 				log.Debug("CNAME record found, lookup up local recursive AAAA")
-				t.resolveAAAA(target, msg)
+				t.resolveAAAA(targetDomain, msg)
 			}
 		}
 	}
