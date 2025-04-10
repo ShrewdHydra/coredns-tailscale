@@ -4,6 +4,7 @@ import (
 	"github.com/coredns/caddy"
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
+	"github.com/miekg/dns"
 )
 
 // init registers this plugin.
@@ -18,7 +19,7 @@ func setup(c *caddy.Controller) error {
 		if len(args) != 1 {
 			return plugin.Error("tailscale", c.ArgErr())
 		}
-		ts.zone = args[0]
+		ts.zone = dns.CanonicalName(args[0])
 
 		for c.NextBlock() {
 			switch c.Val() {

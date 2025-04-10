@@ -3,7 +3,6 @@ package tailscale
 import (
 	"context"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/miekg/dns"
@@ -11,6 +10,7 @@ import (
 	"github.com/coredns/coredns/plugin"
 	"github.com/coredns/coredns/plugin/metrics"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
+	"github.com/coredns/coredns/request"
 )
 
 var log = clog.NewWithPlugin("tailscale")
@@ -26,19 +26,10 @@ const (
 
 func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
 	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
-	fqdnName := dns.Fqdn(strings.ToLower(domainName))
-	zoneFqdn := dns.Fqdn(t.zone)
-	log.Debugf("Resolving A record for %s in zone %s", fqdnName, zoneFqdn)
-
-	// Check if this domain is in our zone
-	if !dns.IsSubDomain(zoneFqdn, fqdnName) {
-		log.Debug("Domain is not in zone, returning")
-		return
-	}
 
 	// Get the number of labels in common between domain and zone
-	commonLabels := dns.CompareDomainName(fqdnName, zoneFqdn)
-	labels := dns.SplitDomainName(fqdnName)
+	commonLabels := dns.CompareDomainName(domainName, t.zone)
+	labels := dns.SplitDomainName(domainName)
 	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
 
 	name := labels[len(labels)-commonLabels-1]
@@ -70,13 +61,11 @@ func (t *Tailscale) resolveA(domainName string, msg *dns.Msg) {
 
 func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
 	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
-	fqdnName := dns.Fqdn(strings.ToLower(domainName))
-	zoneFqdn := dns.Fqdn(t.zone)
-	log.Debugf("Resolving AAAA record for %s in zone %s", fqdnName, zoneFqdn)
+	log.Debugf("Resolving AAAA record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
-	commonLabels := dns.CompareDomainName(fqdnName, zoneFqdn)
-	labels := dns.SplitDomainName(fqdnName)
+	commonLabels := dns.CompareDomainName(domainName, t.zone)
+	labels := dns.SplitDomainName(domainName)
 	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
 
 	name := labels[len(labels)-commonLabels-1]
@@ -108,13 +97,11 @@ func (t *Tailscale) resolveAAAA(domainName string, msg *dns.Msg) {
 
 func (t *Tailscale) resolveCNAME(domainName string, msg *dns.Msg, lookupType int) {
 	// Convert to lowercase and ensure it's a FQDN (with trailing dot)
-	fqdnName := dns.Fqdn(strings.ToLower(domainName))
-	zoneFqdn := dns.Fqdn(t.zone)
-	log.Debugf("Resolving CNAME record for %s in zone %s", fqdnName, zoneFqdn)
+	log.Debugf("Resolving CNAME record for %s in zone %s", domainName, t.zone)
 
 	// Get the number of labels in common between domain and zone
-	commonLabels := dns.CompareDomainName(fqdnName, zoneFqdn)
-	labels := dns.SplitDomainName(fqdnName)
+	commonLabels := dns.CompareDomainName(domainName, t.zone)
+	labels := dns.SplitDomainName(domainName)
 	log.Debugf("Domain has %d labels, zone has %d labels in common", len(labels), commonLabels)
 
 	name := labels[len(labels)-commonLabels-1]
@@ -167,36 +154,36 @@ func (t *Tailscale) handleNoRecords(ctx context.Context, w dns.ResponseWriter, r
 }
 
 func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
-	start := time.Now()
-
-	log.Debugf("Received DNS request for %s (type: %s)", r.Question[0].Name, dns.TypeToString[r.Question[0].Qtype])
-	log.Debugf("Tailscale peers list has %d entries", len(t.entries))
-
-	// Record the request in metrics
+	state := request.Request{W: w, Req: r}
+	qname := state.Name()
 	queryType := dns.TypeToString[r.Question[0].Qtype]
+	log.Debugf("Handling Tailscale %s query for %s", queryType, qname)
+
+	// Check if the query is for a zone we're authoritative for
+	if !dns.IsSubDomain(t.zone, qname) || qname == t.zone {
+		log.Debug("Domain is not in zone, returning")
+		return plugin.NextOrFailure(t.Name(), t.next, ctx, w, r)
+	}
+
 	RequestCount.WithLabelValues(metrics.WithServer(ctx), queryType).Inc()
 
-	if t.zone == "" {
-		log.Warning("Zone is not configured")
-	} else {
-		log.Debugf("Configured zone: %s", t.zone)
-	}
+	start := time.Now()
+	log.Debugf("Tailscale peers list has %d entries", len(t.entries))
+	log.Debugf("Configured zone: %s", t.zone)
 
-	if len(t.entries) > 0 {
-		log.Debug("Available entries:")
-		for name, types := range t.entries {
-			log.Debugf("  ├─ Host: %s", name)
-			for recordType, values := range types {
-				log.Debugf("  │  ├─ %s: %v", recordType, values)
-			}
-		}
-	}
+	// if len(t.entries) > 0 {
+	// 	log.Debug("Available entries:")
+	// 	for name, types := range t.entries {
+	// 		log.Debugf("  ├─ Host: %s", name)
+	// 		for recordType, values := range types {
+	// 			log.Debugf("  │  ├─ %s: %v", recordType, values)
+	// 		}
+	// 	}
+	// }
 
 	msg := dns.Msg{}
 	msg.SetReply(r)
 	msg.Authoritative = true
-
-	name := r.Question[0].Name
 
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -204,15 +191,15 @@ func (t *Tailscale) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.M
 	switch r.Question[0].Qtype {
 	case dns.TypeA:
 		log.Debug("Handling A record lookup")
-		t.resolveA(name, &msg)
+		t.resolveA(qname, &msg)
 
 	case dns.TypeAAAA:
 		log.Debug("Handling AAAA record lookup")
-		t.resolveAAAA(name, &msg)
+		t.resolveAAAA(qname, &msg)
 
 	case dns.TypeCNAME:
 		log.Debug("Handling CNAME record lookup")
-		t.resolveCNAME(name, &msg, TypeAll)
+		t.resolveCNAME(qname, &msg, TypeAll)
 	}
 
 	if len(msg.Answer) > 0 {
